@@ -1,0 +1,203 @@
+\documentclass[]{article}
+
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[export]{adjustbox}
+\usepackage{listings}
+\usepackage{hyperref}
+
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+
+%opening
+\title{An N-ary decision tree generation algorithm for Dyninst aarch64 instruction decoder}
+\author{Steve Song}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+RISC architecture CPUs are considered as an alternative to CISC CPUs by scientists and engineers when they design next generation high performance computing servers. The performance gap between RISC and CISC architecture CPUs continue to be filled, especially when the applications are throughput sensitive rather than latency sensitive. Besides that, RISC is even optimized to be power efficiency. In such cases, the cost of performance per unit will be the dominant factor\cite{WEBSITE:riscserver}\. Under this context, Dyninst seeks to support the aarch64 ISA that is considered as one of the options used in new servers stacked by RISC CPUs. Among the many features Dyninst supports, Instruction API is the one most coupled to the architecture and needs to be redesigned, especially the interface to identify aarch64 isa instructions. This paper conceptually describes how a C++ code generator for Dyninst aarch64 instruction decoder is designed.
+
+\end{abstract}
+
+\section{Background - Dyninst instruction API}
+
+The manual for Dyninst instruction API can be found in \cite{WEBSITE:DyninstInstrutionAPI}. As one of the steps to understand target process’s semantics, Dyninst during runtime read the target process’s binaries from its stacks or heaps section in memory and parse them to corresponding assembly so that it can understand the semantics on the machine instruction level. In this step, the key component in Dyninst is the instruction decoder, which helps Dyninst identify the instructions given binaries.
+
+\begin{figure}[h]
+	\includegraphics[width=0.8\linewidth, center]{p1.jpg}
+	\caption{Dyninst decoding process}
+	\label{fig:dyninstdecoding}
+\end{figure}
+
+\section{Identify the instruction from binary}
+\subsection{Decoding Strategy - Decision Tree}
+The decoding strategy is an intuitive procedure. It is mostly like how we can decide an instruction given the an instruction in binary. The root node of the decision tree examines the bit field that will differentiate the instructions into sub groups and send the binary to the corresponding child node for further examination until to the leaf node, where it can decisively tells us which assembly instruction it is.
+	
+In more detail, each non-leaf node has a bit mask used to categorize the input encoding to 2 sub-groups. First, the input binary to the node is denoted as I; the mask, e.g. 0010, is denoted as M; to return the result starting from base 0, it finally shift by S. For this particular case, S is 1; the output, also called as Branch Index, as BI. Hence, the bit field that we are interested in is the 2nd from LSB. Then the formula, F, to get the BI from I, M and S is
+
+\begin{equation*}
+BI = f(M, I, S) = I \& M \gg S
+\end{equation*}
+
+\begin{figure}[h]
+	\includegraphics[width=\linewidth]{aarch64_tree_decision_tree_0.jpg}
+	\caption{Binary Decision Tree}
+	\label{fig:bindecisiontree}
+\end{figure}
+
+Therefore, the result BI is also either 0 or 1, which can tell which child node to go next for further examination. Obviously, the amount of shift varies on different sub comparison groups.
+
+\subsection{Optimization - N-ary Decision Tree}
+Note that for some of node, we categorize the sub group into 2 is not efficient. For instance, the left sub-tree can totally use the 2 bits together as the index of the leaf nodes. These cases are identified when all instructions in the sub group shares the same bit fields that have not yet been used for comparisons.
+
+By this way, it saves branch jumps by indexing more fields at one node, which makes the tree even denser with shorter heights. I didn't measure the performance. However, it will apparently help reduce memory consumption and fewer jumps on the tree.
+
+\begin{figure}[h]
+	\includegraphics[width=\linewidth]{aarch64_tree_decision_tree_1.jpg}
+	\caption{N-ary Decision Tree}
+	\label{fig:ndecisiontree}
+\end{figure}
+
+\section{Least Common Op Fields Algorithm}
+So far, we have figured out a decision tree based algorithm to decode the binaries from memory. However, there are hundreds of instructions in aarch64 isa. It is too trivial to implement the decision tree manually. It is even an error prone process. What is 
+more important, we would like to always stay updated with official ARM ISA in time and be reliable low level lib. Hence, we don't want to use existing code from non official libraries. Under such situations, the best way is to generate the decision tree automatically from reliable sources. Fortunately, we have worked with ARM company and obtained the aarch64 isa manual in XML legally. This will 
+become our ground truth.
+
+\subsection{Decoder Generator}
+Combined the resources with have and the existing Dyninst Instrution API lib interface, the whole process is hard: since what we want is the decision tree based decoder in C++ in the Dyninst lib, it is able to write a script to generate the decoder offline/pre-compilation.
+It is generally divided into two phases/components: 1. Pre-processing: XML parser 2. Decoder generation: Decision Tree Generator.
+
+\begin{figure}[h]
+	\includegraphics[width=0.8\linewidth, center]{aarch64_tree_decoder_generator.jpg}
+	\caption{DecoderGen}
+	\label{fig:decodergen}
+\end{figure}
+
+\subsection{Pre processing: XML parser}
+The official XML contains too much information. Most of them are not interested to us but engineers as references. To implement the decoder, the necessary information for each instruction includes:
+\begin{enumerate}
+	\item Instruction semantics
+	\item Operation(Op) fields and encoding
+	\item Operand fields and allowed encoding(range)
+	\item Instruction Mnemonics
+	\item Misc fields and allowed encoding
+\end{enumerate}
+
+This part is easy and trivial. I just iterate through the whole xml document and parse the related fields by identifying the tags. Finally, record the useful information and put them in a table. The table is after pre-processing feed to the Decoder Generator.
+
+
+\subsection{Least Common Op Fields Algorithm}
+Once after pre-processing, the decoder generator is feed with the instruction data table. It contains all the necessary information
+to decode a binary code to an instruction. To begin with, let's take a look at what the information we have, the encoding fields for 
+each instruction. Four fake instructions, A, B, C and D with numbered bit position:
+
+\begin{lstlisting}
+   0123 4567 890a
+A: xxxx 01xx xxxx
+B: xxxx 00xx xxxx
+C: xxx0 1110 xxxx
+D: xxx1 1110 xxxx
+\end{lstlisting}
+
+Some explanation on this representations. The x bit represent variable fields, like operands or flags. This can be set to either 0s or
+1s in runtime. Fields with 0s or 1s are Opcode fields. These fields tells us which instruction it is, which is the most important
+information for us.
+
+To generate the decision tree, generator first find the \textit{least common op bit fields} so that we can divide the instruction into
+2 sub groups. In this case, this least common op bit fields is 4 and 5. Since to begin with, we would like to divide sub group into 2,
+we take the first bit within 4, 5. Then it is 4. So it is easily to categorize instruction A \& B into sub group (G1) and instruction 
+C \& D into sub group (G2). So put the mask M1 into the root node of the decision tree.
+
+\begin{lstlisting}
+      0123 |4|567 890a
+G1 A: xxxx |0|1xx xxxx
+   B: xxxx |0|0xx xxxx
+--------------------
+G2 C: xxx0 |1|110 xxxx
+   D: xxx1 |1|110 xxxx
+--------------------
+M1    0000  1 000 0000
+\end{lstlisting}
+
+Then we pass the sub group to the child node in the decision tree, and we have, take sub group G1 for example, instruction A and B.
+Since bit field 4 has been used, we mark it with \textit{u}. Re-run the categorizing process again, we have 5 as our index bit field.
+Generator put the mask M2 into the child node. As one more level down the decision tree, with this information, it can uniquely identify the instruction already, the algorithm terminates and generate leaf node in the decision tree. At the meantime, insert an instruction function into the instruction function table and put the index into the leaf node.
+\begin{lstlisting}
+   0123 4|5|67 890a
+A: xxxx u|1|xx xxxx
+B: xxxx u|0|xx xxxx
+--------------------
+M2 0000 0 1 00 0000
+\end{lstlisting}
+
+Similarly, we can re-run the whole process to figure the decision tree node masks and child nodes for the sub group G2. A more generalized algorithm is described in the pseudocode below.
+
+\begin{algorithm}[h]
+\caption{decision tree generation algorithm}\label{euclid}
+\begin{algorithmic}[1]
+	\Procedure{treeGen}{instructionArray, node}
+
+	\If {$\text{length of }\textit{instructions} = 1$} 
+		\State {$\textit{node.childs } \text{append } \textit{genLeafNode(instructions[0])}$} 
+		\State \Return 
+	\EndIf
+	\newline
+	\State {$\textit{maskBits} = \textit{init()} $}
+	
+	\For {$\text{each } \textit{i } \text{in } \textit{instructions }$}
+		\State {$\textit{maskBits} = \textit{i} $}
+	\EndFor
+	\newline
+	
+	\State {$\textit{shift} \gets getShift(\textit{maskBits})$}
+	
+	\State {$\textit{subInstructionsGrups} \gets \textit{init(maskBits)} $}
+	\For {$\text{each } \textit{i } \text{in } \textit{instructions} $}
+		\State {$\textit{bi} \gets \textit{f(i, mask, shift)}$}
+		\State{$\textit{subInstructionsGroups[bi] } \text{appends } \textit{i }$}
+	\EndFor
+	\newline
+	
+	\State {$\textit{newNode} \gets \textit{genNewNode(mask, shift)}$}
+	\State {$\textit{node.childs } \text{append } \textit{newNode}$}
+	
+	\For {$\text{each } \textit{g } \text{in } \textit{subInstructionsGroups } $}
+		\State {$\textit{treeGen(g, newNode)}$}
+	\EndFor
+	
+	\EndProcedure
+\end{algorithmic}	
+	
+\end{algorithm}
+
+
+\subsection{Implementation Data Structure}
+In reality, I use arrays as the decision tree. Each entry in the array represent a single node in the decision tree with the comparison meta data, like mask and shift length, and child nodes indexes in the array. The leaf node of the tree doesn't have any child node information but the index of the index to the specific instruction function in the instruction function array. Instruction Function is a specific type of functions in Dyninst Instruction API. Each instruction has a corresponding Instruction Function to parse the instruction
+binary and store the information in the instruction class. Once the instruction is identified, the corresponding Instruction Function is
+invoked, and store information for use by next stage in the lib.
+
+\section{Design Problems}
+\subsection{Aliased Instruction}
+One problems I saw during running the algorithm, I found that there are some instructions share the same op encoding. There are actually the same instruction with aliases. Most of them share the same encoding, but with some specific values in the operand/flag fields, they are given different
+names. Such aliases is just useful for human reading. They don't affect how the processor execute the instructions. However, since we are decoding 
+the binaries, it might be good to be able to handle them. Here, I provide two different solutions to this problem: weak aliasing handling and strong aliasing handling.
+
+With weak aliasing handling, during the algorithm running, we just chose the more generic instruction which covers the most range of aliased instructions with the same op code. The reason is that like I explained above, the execution path and semantic are the same.
+
+With strong aliasing handling, decoder should be able to recognize them. The solution is during tree generation, once we collected all the aliased 
+instructions (this is possible since aliased instruction by definition always are categorized into same sub gropus), they are sort from the most 
+strict encoding to most generic encoding. And during comparison, the aliased instrution will be picked up by the stronger mask first before they are
+identified as the generic instructions.
+
+\section{Summary}
+In this paper, I described an least common op fields algorithm to generate decision tree based decoder for the Dyninst lib. This is used as part of the porting to
+ARM aarch64 architecture project. The source code can be found on the git hub repository \url{https://github.com/dyninst/dyninst/blob/arm64_dev/instructionAPI/aarch64_manual_parser.py}. The algorithm works well
+for an open source library Dyninst. Hopefully, this algorithm will be useful for some ones as references when they have similar requirements or problems.
+
+\bibliography{steve_general} 
+\bibliographystyle{ieeetr}
+
+\end{document}
