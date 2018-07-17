@@ -33,7 +33,7 @@ The manual for Dyninst instruction API can be found in \cite{WEBSITE:DyninstInst
 \end{figure}
 
 \section{Identify the instruction from binary}
-\subsection{Decoding Strategy - Decision Tree}
+\subsection{Decoding Strategy - Design A Decision Tree}
 The decoding strategy is an intuitive procedure. It is mostly like how we can decide an instruction given the an instruction in binary. The root node of the decision tree examines the bit field that will differentiate the instructions into sub groups and send the binary to the corresponding child node for further examination until to the leaf node, where it can decisively tells us which assembly instruction it is.
 	
 In more detail, each non-leaf node has a bit mask used to categorize the input encoding to 2 sub-groups. First, the input binary to the node is denoted as I; the mask, e.g. 0010, is denoted as M; to return the result starting from base 0, it finally shift by S. For this particular case, S is 1; the output, also called as Branch Index, as BI. Hence, the bit field that we are interested in is the 2nd from LSB. Then the formula, F, to get the BI from I, M and S is
@@ -50,7 +50,7 @@ BI = f(M, I, S) = I \& M \gg S
 
 Therefore, the result BI is also either 0 or 1, which can tell which child node to go next for further examination. Obviously, the amount of shift varies on different sub comparison groups.
 
-\subsection{Optimization - N-ary Decision Tree}
+\subsection{Tree Splitting(Optimization) - N-ary Decision Tree}
 Note that for some of node, we categorize the sub group into 2 is not efficient. For instance, the left sub-tree can totally use the 2 bits together as the index of the leaf nodes. These cases are identified when all instructions in the sub group shares the same bit fields that have not yet been used for comparisons.
 
 By this way, it saves branch jumps by indexing more fields at one node, which makes the tree even denser with shorter heights. I didn't measure the performance. However, it will apparently help reduce memory consumption and fewer jumps on the tree.
@@ -61,7 +61,7 @@ By this way, it saves branch jumps by indexing more fields at one node, which ma
 	\label{fig:ndecisiontree}
 \end{figure}
 
-\section{Least Common Op Fields Algorithm}
+\section{Learning A Decision Tree}
 So far, we have figured out a decision tree based algorithm to decode the binaries from memory. However, there are hundreds of instructions in aarch64 isa. It is too trivial to implement the decision tree manually. It is even an error prone process. What is 
 more important, we would like to always stay updated with official ARM ISA in time and be reliable low level lib. Hence, we don't want to use existing code from non official libraries. Under such situations, the best way is to generate the decision tree automatically from reliable sources. Fortunately, we have worked with ARM company and obtained the aarch64 isa manual in XML legally. This will 
 become our ground truth.
