@@ -18,7 +18,7 @@
 \maketitle
 
 \begin{abstract}
-RISC architecture CPUs are considered as an alternative to CISC CPUs by scientists and engineers when they design next generation high performance computing servers. The performance gap between RISC and CISC architecture CPUs continue to be filled, especially when the applications are throughput sensitive rather than latency sensitive. Besides that, RISC is even optimized to be power efficiency. In such cases, the cost of performance per unit will be the dominant factor\cite{WEBSITE:riscserver}\. Under this context, Dyninst seeks to support the aarch64 ISA that is considered as one of the options used in new servers stacked by RISC CPUs. Among the many features Dyninst supports, Instruction API is the one most coupled to the architecture and needs to be redesigned, especially the interface to identify aarch64 isa instructions. This paper conceptually describes how a C++ code generator for Dyninst aarch64 instruction decoder is designed.
+RISC architecture CPUs are considered as an alternative to CISC CPUs by scientists and engineers when they design next generation high performance computing servers. The performance gap between RISC and CISC architecture CPUs continue to be filled, especially when the applications are throughput sensitive rather than latency sensitive. Besides that, RISC is even optimized to be power efficient. In such cases, the cost of performance per unit will be the dominant factor\cite{WEBSITE:riscserver}\. Under this context, Dyninst seeks to support the aarch64 ISA that is considered as one of the options used in new servers stacked by RISC CPUs. Among the many features Dyninst supports, Instruction API is the one most coupled to the architecture and needs to be redesigned, especially the interface to identify aarch64 isa instructions. This paper conceptually describes how a C++ code generator for Dyninst aarch64 instruction decoder is designed.
 
 \end{abstract}
 
@@ -68,7 +68,7 @@ become our ground truth.
 
 \subsection{Decoder Generator}
 Combined the resources with have and the existing Dyninst Instrution API lib interface, the whole process is hard: since what we want is the decision tree based decoder in C++ in the Dyninst lib, it is able to write a script to generate the decoder offline/pre-compilation.
-It is generally divided into two phases/components: 1. Pre-processing: XML parser 2. Decoder generation: Decision Tree Generator.
+It is generally divided into two phases/components with borrowing ideas from building a common compiler\cite{WEBSITE:BuildACompiler}: 1. Pre-processing: XML parser 2. Decoder generation: Decision Tree Generator.
 
 \begin{figure}[h]
 	\includegraphics[width=0.8\linewidth, center]{aarch64_tree_decoder_generator.jpg}
@@ -91,8 +91,8 @@ This part is easy and trivial. I just iterate through the whole xml document and
 
 \subsection{Least Common Op Fields Algorithm}
 Once after pre-processing, the decoder generator is feed with the instruction data table. It contains all the necessary information
-to decode a binary code to an instruction. To begin with, let's take a look at what the information we have, the encoding fields for 
-each instruction. Four fake instructions, A, B, C and D with numbered bit position:
+to decode a binary code to an instruction. The actual aarch64 ISA can be found in the ARM manual\cite{ARMManual}. To begin with, let's take a look at what the information we have, the encoding fields for 
+each instruction. To illustrate the problem, presuming we have four fake instructions, A, B, C and D with numbered bit position:
 
 \begin{lstlisting}
    0123 4567 890a
@@ -175,15 +175,15 @@ Similarly, we can re-run the whole process to figure the decision tree node mask
 
 
 \subsection{Implementation Data Structure}
-In reality, I use arrays as the decision tree. Each entry in the array represent a single node in the decision tree with the comparison meta data, like mask and shift length, and child nodes indexes in the array. The leaf node of the tree doesn't have any child node information but the index of the index to the specific instruction function in the instruction function array. Instruction Function is a specific type of functions in Dyninst Instruction API. Each instruction has a corresponding Instruction Function to parse the instruction
+In reality, I use arrays as the decision tree. Each entry in the array represent a single node in the decision tree with the comparison meta data, like mask and shift length, and child nodes indexes in the array. The leaf node of the tree doesn't have any child node information but the index of the index to the specific instruction function in the instruction function array. By this way, it is more space efficient since the actual size of the instruction numbers are small enough to occupy a really small portion of memory\cite{WEBSITE:BSTArray}. Instruction Function is a specific type of functions in Dyninst Instruction API. Each instruction has a corresponding Instruction Function to parse the instruction
 binary and store the information in the instruction class. Once the instruction is identified, the corresponding Instruction Function is
 invoked, and store information for use by next stage in the lib.
 
 \section{Design Problems}
 \subsection{Aliased Instruction}
-One problems I saw during running the algorithm, I found that there are some instructions share the same op encoding. There are actually the same instruction with aliases. Most of them share the same encoding, but with some specific values in the operand/flag fields, they are given different
+One problems I saw during running the algorithm, I found that there are some instructions with different mnemonics share the same op encoding. There are actually the same instruction with aliases. Most of them share the same encoding, but with some specific values in the operand/flag fields, they are given different
 names. Such aliases is just useful for human reading. They don't affect how the processor execute the instructions. However, since we are decoding 
-the binaries, it might be good to be able to handle them. Here, I provide two different solutions to this problem: weak aliasing handling and strong aliasing handling.
+the binaries, it might be good to be able to handle them. With borrowing the idea from computer architecture area to analyze this problem\cite{WEBSITE:WikiAliasingComputing}, I provide two different solutions to this problem: weak aliasing handling and strong aliasing handling.
 
 With weak aliasing handling, during the algorithm running, we just chose the more generic instruction which covers the most range of aliased instructions with the same op code. The reason is that like I explained above, the execution path and semantic are the same.
 
